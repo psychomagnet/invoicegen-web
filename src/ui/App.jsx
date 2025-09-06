@@ -14,10 +14,10 @@ import drive, {
 // Google auth helpers (new)
 import {
   initGoogleAuth,
-  getAccessToken,
-  requestAccess,
-  signOut as googleSignOut,
+  signInInteractive,
+  getAccessTokenSync,
 } from "../services/googleAuth";
+
 
 const LS_KEYS = {
   clientId: "inv_web_client_id",
