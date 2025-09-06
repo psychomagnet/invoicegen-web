@@ -1,7 +1,7 @@
 // src/services/drive.js
-// Handles Google Drive uploads (PDF/JSON) with support for Shared Drives.
+// Google Drive helpers (works with My Drive + Shared drives)
 
-export async function driveGetFolderMeta(accessToken, folderId) {
+async function getFolderMeta(accessToken, folderId) {
   const res = await fetch(
     `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(folderId)}?fields=id,name,mimeType,driveId,owners&supportsAllDrives=true`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
@@ -13,7 +13,7 @@ export async function driveGetFolderMeta(accessToken, folderId) {
   return res.json();
 }
 
-export async function driveCreateFile(accessToken, { name, mimeType, parents, data }) {
+async function createFile(accessToken, { name, mimeType, parents, data }) {
   const metadata = { name, mimeType, parents };
   const boundary = '-------314159265358979323846';
   const body =
@@ -36,16 +36,14 @@ export async function driveCreateFile(accessToken, { name, mimeType, parents, da
       body
     }
   );
-
   if (!res.ok) {
     const msg = await res.text();
     throw new Error(`Drive create failed: ${res.status} ${msg}`);
   }
-
   return res.json();
 }
 
-export async function driveListFiles(accessToken, folderId) {
+async function listFiles(accessToken, folderId) {
   const res = await fetch(
     `https://www.googleapis.com/drive/v3/files?q='${encodeURIComponent(folderId)}'+in+parents&fields=files(id,name,mimeType,modifiedTime)&supportsAllDrives=true&includeItemsFromAllDrives=true`,
     { headers: { Authorization: `Bearer ${accessToken}` } }
@@ -56,3 +54,13 @@ export async function driveListFiles(accessToken, folderId) {
   }
   return res.json();
 }
+
+/* ---- Exports ---- */
+// Named (if any code imports { getFolderMeta } etc)
+export { getFolderMeta, createFile, listFiles };
+// Legacy aliases (in case earlier code used these names)
+export const driveGetFolderMeta = getFolderMeta;
+export const driveCreateFile   = createFile;
+export const driveListFiles    = listFiles;
+// Default object (if code does: import drive from './drive')
+export default { getFolderMeta, createFile, listFiles };
