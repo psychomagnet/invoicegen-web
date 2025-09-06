@@ -1,35 +1,45 @@
-let tokenClient;
+// src/services/googleAuth.js
+let tokenClient = null;
 let accessToken = null;
+let expiresAt = 0;
 
-export function initGoogleAuth(clientId, onToken) {
-  if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) {
-    console.error("Google Identity Services SDK not loaded. Did you add the <script> tag?");
-    return;
+const SCOPES = [
+  // Full Drive access so we can read an existing folder by ID and write files
+  "https://www.googleapis.com/auth/drive",
+  // For future email sending
+  "https://www.googleapis.com/auth/gmail.send",
+].join(" ");
+
+function now() { return Math.floor(Date.now() / 1000); }
+
+export function initGoogleAuth(clientId) {
+  if (!window.google?.accounts?.oauth2) {
+    throw new Error(
+      "Google Identity script not loaded. Add <script src=\"https://accounts.google.com/gsi/client\" async defer></script> to index.html <head>."
+    );
   }
-
   tokenClient = window.google.accounts.oauth2.initTokenClient({
     client_id: clientId,
-    scope: "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.send",
-    callback: (response) => {
-      if (response.error) {
-        console.error("Auth error", response);
-        return;
-      }
-      accessToken = response.access_token;
-      console.log("Got access token:", accessToken);
-      if (onToken) onToken(accessToken);
-    },
+    scope: SCOPES,
+    callback: () => {}, // set per request
   });
 }
 
-export function signIn() {
-  if (!tokenClient) {
-    console.error("Google Auth not initialized");
-    return;
-  }
-  tokenClient.requestAccessToken({ prompt: "consent" });
+export function signInInteractive() {
+  if (!tokenClient) throw new Error("Google auth not initialized");
+  return new Promise((resolve, reject) => {
+    tokenClient.callback = (resp) => {
+      if (resp.error) return reject(resp);
+      accessToken = resp.access_token;
+      const seconds = Number(resp.expires_in || 3600);
+      expiresAt = now() + seconds - 30;
+      resolve(accessToken);
+    };
+    tokenClient.requestAccessToken({ prompt: "consent" });
+  });
 }
 
-export function getAccessToken() {
-  return accessToken;
+export function getAccessTokenSync() {
+  if (accessToken && now() < expiresAt) return accessToken;
+  return null;
 }
