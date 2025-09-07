@@ -4,18 +4,18 @@ let accessToken = null;
 let expiresAt = 0;
 
 const SCOPES = [
-  // Full Drive access so we can read an existing folder by ID and write files
+  // Use full Drive so we can read an arbitrary folder by ID and upload into it
   "https://www.googleapis.com/auth/drive",
   // For future email sending
   "https://www.googleapis.com/auth/gmail.send",
 ].join(" ");
 
-function now() { return Math.floor(Date.now() / 1000); }
+const now = () => Math.floor(Date.now() / 1000);
 
 export function initGoogleAuth(clientId) {
   if (!window.google?.accounts?.oauth2) {
     throw new Error(
-      "Google Identity script not loaded. Add <script src=\"https://accounts.google.com/gsi/client\" async defer></script> to index.html <head>."
+      'Google Identity script not loaded. Add <script src="https://accounts.google.com/gsi/client" async defer></script> into <head>.'
     );
   }
   tokenClient = window.google.accounts.oauth2.initTokenClient({
