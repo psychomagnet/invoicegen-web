@@ -1,17 +1,25 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
     <title>InvoiceGen Web</title>
 
-    <!-- Google Identity Services (needed for OAuth to work) -->
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <!-- Google Identity (must be before your bundle) -->
+    <script
+      src="https://accounts.google.com/gsi/client"
+      async
+      defer
+    ></script>
+
+    <!-- Our minimal CSS -->
+    <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <div id="root"></div>
-
-    <!-- React/Vite entry point -->
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
