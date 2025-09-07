@@ -12,7 +12,6 @@ export default function Login({ onAuthed }) {
   const [status, setStatus] = useState("Idle");
 
   useEffect(() => {
-    // Only initialize once we have a clientId typed/pasted
     if (!clientId) return;
     try {
       initGoogleAuth(clientId);
@@ -26,7 +25,6 @@ export default function Login({ onAuthed }) {
     try {
       setStatus("Signing in…");
       await signInInteractive();
-      // persist settings
       localStorage.setItem(LS_KEYS.clientId, clientId.trim());
       localStorage.setItem(LS_KEYS.folderId, folderId.trim());
       setStatus("Signed in");
@@ -37,43 +35,43 @@ export default function Login({ onAuthed }) {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-50 flex items-center justify-center p-6">
-      <div className="w-full max-w-xl bg-white rounded-2xl shadow p-6 space-y-5">
-        <h1 className="text-2xl font-semibold">InvoiceGen Web · Sign in</h1>
-        <p className="text-sm text-neutral-600">
-          Paste your <span className="font-medium">Google OAuth Client ID</span> and the
-          <span className="font-medium"> Drive Folder ID</span> for saving invoices. You’ll only do this once; we’ll remember them locally.
-        </p>
-        <label className="text-sm block">
-          Google OAuth Client ID
+    <div className="login-wrap">
+      <div className="login-card">
+        <div className="login-title">InvoiceGen Web · Sign in</div>
+        <div className="help">
+          Paste your <b>Google OAuth Client ID</b> and the <b>Drive Folder ID</b> for saving
+          invoices. You’ll only do this once; we remember them locally.
+        </div>
+
+        <div className="field">
+          <label>Google OAuth Client ID</label>
           <input
-            className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2"
-            placeholder="xxxxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com"
+            className="input"
+            placeholder="xxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com"
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
           />
-        </label>
-        <label className="text-sm block">
-          Drive Folder ID
+        </div>
+
+        <div className="field">
+          <label>Drive Folder ID</label>
           <input
-            className="mt-1 w-full rounded-xl border border-neutral-300 px-3 py-2"
+            className="input"
             placeholder="Drive folder ID (the long string in the URL)"
             value={folderId}
             onChange={(e) => setFolderId(e.target.value)}
           />
-        </label>
-        <div className="flex items-center justify-between">
-          <div className="text-xs text-neutral-600">Status: {status}</div>
-          <button
-            className="rounded-xl bg-black text-white px-4 py-2 text-sm disabled:opacity-50"
-            disabled={!clientId || !folderId}
-            onClick={handleSignIn}
-          >
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <div className="help">Status: {status}</div>
+          <button className="btn btn-primary" disabled={!clientId || !folderId} onClick={handleSignIn}>
             Sign in with Google
           </button>
         </div>
-        <div className="text-xs text-neutral-500">
-          Tip: make sure your OAuth “Authorized JavaScript origins” includes this site and localhost (during dev).
+
+        <div className="help">
+          Tip: make sure your OAuth “Authorized JavaScript origins” include this site and localhost (during dev).
         </div>
       </div>
     </div>
