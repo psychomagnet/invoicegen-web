@@ -1,235 +1,207 @@
 // src/ui/App.jsx
 import React, { useEffect, useMemo, useState } from "react";
-
-// Drive helpers (already updated to support Shared drives)
-import drive, {
-  getFolderMeta,
-  createFile,
-  listFiles,
-  driveGetFolderMeta,
-  driveCreateFile,
-  driveListFiles,
-} from "../services/drive";
-
-// Google auth helpers (new)
-import {
-  initGoogleAuth,
-  signInInteractive,
-  getAccessTokenSync,
-} from "../services/googleAuth";
-
+import { getFolderMeta, createFile } from "../services/drive";
+import { initGoogleAuth, signInInteractive, getAccessTokenSync } from "../services/googleAuth";
 
 const LS_KEYS = {
   clientId: "inv_web_client_id",
   folderId: "inv_web_folder_id",
+  invoiceNo: "inv_web_invoice_no",
 };
+
+function pad2(n) { return String(n).padStart(2, "0"); }
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+function plusDaysISO(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
 
 export default function App() {
   // Settings
   const [clientId, setClientId] = useState(localStorage.getItem(LS_KEYS.clientId) || "");
   const [folderId, setFolderId] = useState(localStorage.getItem(LS_KEYS.folderId) || "");
   const [status, setStatus] = useState("Idle");
+
+  // Auth state (simple)
   const [authed, setAuthed] = useState(false);
 
-  // Invoice UI (minimal preview)
-  const [invoiceNo, setInvoiceNo] = useState(25);
-  const [overrideNo, setOverrideNo] = useState(false);
-  const [contact, setContact] = useState({ name: "", address1: "", address2: "", cityzip: "" });
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  const dueDate = useMemo(() => {
-    const d = new Date(date);
-    d.setDate(d.getDate() + 15);
-    return d.toISOString().slice(0, 10);
-  }, [date]);
-
-  // Debug: show what drive exports look like
-  console.log("Drive module keys:", Object.keys(drive || {}));
-  console.log("Named exports present:", {
-    getFolderMeta: typeof getFolderMeta,
-    createFile: typeof createFile,
-    listFiles: typeof listFiles,
-    driveGetFolderMeta: typeof driveGetFolderMeta,
-    driveCreateFile: typeof driveCreateFile,
-    driveListFiles: typeof driveListFiles,
+  // Invoice fields (minimal)
+  const [invoiceNo, setInvoiceNo] = useState(() => {
+    const saved = localStorage.getItem(LS_KEYS.invoiceNo);
+    return saved ? Number(saved) : 25;
   });
+  const [overrideNo, setOverrideNo] = useState(false);
 
+  const [contact, setContact] = useState({ name: "", address1: "", address2: "", cityzip: "" });
+  const [date, setDate] = useState(todayISO());
+  const dueDate = useMemo(() => plusDaysISO(15), []);
+
+  // -------------------------------
+  // B) Initialize Google auth when clientId changes
+  // -------------------------------
   useEffect(() => {
-    // If GIS loaded and we have a clientId, initialize
-    if (window.google && clientId) {
-      try {
-        initGoogleAuth(clientId);
-      } catch (e) {
-        console.error("initGoogleAuth error", e);
-      }
+    if (!clientId) return;
+    try {
+      initGoogleAuth(clientId);
+      setStatus("Auth ready");
+    } catch (e) {
+      console.error(e);
+      setStatus("Auth init error");
     }
   }, [clientId]);
 
-  function persistSettings() {
+  function saveSettings() {
     localStorage.setItem(LS_KEYS.clientId, clientId);
     localStorage.setItem(LS_KEYS.folderId, folderId);
+    setStatus("Settings saved");
   }
 
   async function handleSignIn() {
     try {
-      persistSettings();
-      if (!window.google) throw new Error("Google Identity script not loaded");
-      if (!clientId) throw new Error("Enter your Google OAuth Client ID first");
-      initGoogleAuth(clientId);
-      setStatus("Requesting access…");
-      await requestAccess({ prompt: "consent" });
+      await signInInteractive(); // opens Google consent; stores token
       setAuthed(true);
       setStatus("Signed in");
     } catch (e) {
       console.error(e);
-      alert(e.message || "Sign-in failed");
+      setAuthed(false);
       setStatus("Auth error");
+      alert(e.message || "Sign in failed");
     }
   }
 
-  function handleSignOut() {
-    googleSignOut();
-    setAuthed(false);
-    setStatus("Signed out");
-  }
+  async function handleSaveToDrive() {
+    // Ensure token present
+    if (!getAccessTokenSync()) {
+      setStatus("Please sign in first");
+      alert("Click 'Sign in with Google' and approve access.");
+      return;
+    }
+    if (!folderId) {
+      setStatus("Missing Drive folder ID");
+      alert("Please enter a valid Drive folder ID and Save settings.");
+      return;
+    }
 
-  async function handleSave() {
+    setStatus("Checking folder…");
     try {
-      persistSettings();
-      setStatus("Checking folder…");
-      const token = await getAccessToken(); // silent refresh if possible
-      setAuthed(true);
+      await getFolderMeta(folderId);
+    } catch (e) {
+      console.error(e);
+      setStatus("Cannot access folder");
+      alert("Cannot access target folder. Check the ID (and that you’re signed in with the account that owns the folder).");
+      return;
+    }
 
-      // sanity check folder exists and is reachable
-      const meta = await getFolderMeta(token, folderId);
-      console.log("Folder meta:", meta);
+    // Build a simple invoice payload
+    const payload = {
+      contact,
+      invoiceNo,
+      date,
+      dueDate,
+      total: 0,
+      generatedAt: new Date().toISOString(),
+    };
 
-      // Here you would generate and upload the files; for now we only validate auth/folder.
-      setStatus("Ready (folder reachable)");
-      alert("Drive folder reachable. (This confirms auth + folder ID are good.)");
-    } catch (err) {
-      console.error("Drive error:", err);
-      setStatus("Error");
-      // Surface the server error body if present
-      try {
-        const parsed = JSON.parse(
-          ("" + err.message).replace(/^.*\{/, "{") // crude extract if message wrapped text
-        );
-        alert(JSON.stringify(parsed, null, 2));
-      } catch {
-        alert(err.message || "Unknown error");
+    setStatus("Saving to Drive…");
+    try {
+      const safeName = `invoice_${invoiceNo}_${date}.json`;
+      await createFile({
+        folderId,
+        name: safeName,
+        mimeType: "application/json",
+        data: JSON.stringify(payload, null, 2),
+      });
+
+      // Increment invoice number (unless user is overriding)
+      if (!overrideNo) {
+        const next = Number(invoiceNo) + 1;
+        setInvoiceNo(next);
+        localStorage.setItem(LS_KEYS.invoiceNo, String(next));
       }
+      setStatus("Saved to Drive ✓");
+      alert(`Saved to Drive as ${safeName}`);
+    } catch (e) {
+      console.error(e);
+      setStatus("Save failed");
+      alert(e.message || "Save failed");
     }
   }
 
   return (
-    <div style={{ padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}>
-      <h1>InvoiceGen Web</h1>
+    <div style={{ maxWidth: 980, margin: "24px auto", padding: 16, fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif" }}>
+      <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700 }}>InvoiceGen Web</h1>
 
-      <section style={{ border: "1px solid #ddd", padding: 12, borderRadius: 8, marginBottom: 12 }}>
-        <h3>Settings</h3>
-        <div style={{ marginBottom: 8 }}>
+      {/* SETTINGS */}
+      <section style={{ marginTop: 16, padding: 16, border: "1px solid #ddd", borderRadius: 8 }}>
+        <h2 style={{ marginTop: 0, fontSize: 18 }}>Settings</h2>
+
+        <div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: 8, alignItems: "center" }}>
           <label>Google OAuth Client ID</label>
-          <input
-            style={{ width: "100%" }}
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-            placeholder="your-client-id.apps.googleusercontent.com"
-          />
-        </div>
-        <div style={{ marginBottom: 8 }}>
+          <input value={clientId} onChange={(e) => setClientId(e.target.value)} style={{ padding: 8 }} />
+
           <label>Drive Folder ID</label>
-          <input
-            style={{ width: "100%" }}
-            value={folderId}
-            onChange={(e) => setFolderId(e.target.value)}
-            placeholder="Folder ID from your Drive URL"
-          />
+          <input value={folderId} onChange={(e) => setFolderId(e.target.value)} style={{ padding: 8 }} />
         </div>
 
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-          <button onClick={persistSettings}>Save settings</button>
-          {!authed ? (
-            <button onClick={handleSignIn}>Sign in with Google</button>
-          ) : (
-            <button onClick={handleSignOut}>Sign out</button>
-          )}
-          <span style={{ fontSize: 12, color: "#555" }}>Status: {status}</span>
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <button onClick={saveSettings}>Save settings</button>
+          <button onClick={handleSignIn}>Sign in with Google</button>
+          <span style={{ marginLeft: 8, color: "#666" }}>Status: {status}{authed ? " (authed)" : ""}</span>
         </div>
-
-        <button onClick={handleSave}>Save (saves to Drive & increments)</button>
       </section>
 
-      <section style={{ border: "1px solid #ddd", padding: 12, borderRadius: 8, marginBottom: 12 }}>
-        <h3>Invoice</h3>
-        <div>
+      {/* INVOICE */}
+      <section style={{ marginTop: 16, padding: 16, border: "1px solid #ddd", borderRadius: 8 }}>
+        <h2 style={{ marginTop: 0, fontSize: 18 }}>Invoice</h2>
+
+        <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 8, alignItems: "center" }}>
           <label>Name</label>
-          <input
-            style={{ width: "100%" }}
-            value={contact.name}
-            onChange={(e) => setContact({ ...contact, name: e.target.value })}
-          />
-        </div>
-        <div>
+          <input value={contact.name} onChange={(e) => setContact({ ...contact, name: e.target.value })} style={{ padding: 8 }} />
+
           <label>Address line 1</label>
-          <input
-            style={{ width: "100%" }}
-            value={contact.address1}
-            onChange={(e) => setContact({ ...contact, address1: e.target.value })}
-          />
-        </div>
-        <div>
+          <input value={contact.address1} onChange={(e) => setContact({ ...contact, address1: e.target.value })} style={{ padding: 8 }} />
+
           <label>Address line 2</label>
-          <input
-            style={{ width: "100%" }}
-            value={contact.address2}
-            onChange={(e) => setContact({ ...contact, address2: e.target.value })}
-          />
-        </div>
-        <div>
+          <input value={contact.address2} onChange={(e) => setContact({ ...contact, address2: e.target.value })} style={{ padding: 8 }} />
+
           <label>City/Zip</label>
-          <input
-            style={{ width: "100%" }}
-            value={contact.cityzip}
-            onChange={(e) => setContact({ ...contact, cityzip: e.target.value })}
-          />
-        </div>
+          <input value={contact.cityzip} onChange={(e) => setContact({ ...contact, cityzip: e.target.value })} style={{ padding: 8 }} />
 
-        <div style={{ marginTop: 8 }}>
-          <label>Invoice #</label>{" "}
-          <input
-            disabled={!overrideNo}
-            value={invoiceNo}
-            onChange={(e) => setInvoiceNo(e.target.value)}
-            style={{ width: 100 }}
-          />
-          <label style={{ marginLeft: 8 }}>
+          <label>Invoice #</label>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <input
-              type="checkbox"
-              checked={overrideNo}
-              onChange={(e) => setOverrideNo(e.target.checked)}
+              type="number"
+              value={invoiceNo}
+              onChange={(e) => setInvoiceNo(Number(e.target.value))}
+              disabled={!overrideNo}
+              style={{ padding: 8, width: 140, background: overrideNo ? "white" : "#f3f3f3" }}
             />
-            {" "}Override invoice number
-          </label>
+            <label style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+              <input type="checkbox" checked={overrideNo} onChange={(e) => setOverrideNo(e.target.checked)} />
+              Override invoice number
+            </label>
+          </div>
+
+          <label>Invoice date</label>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ padding: 8, width: 180 }} />
         </div>
 
-        <div style={{ marginTop: 8 }}>
-          <label>Invoice date</label>{" "}
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-          <span style={{ marginLeft: 8, fontSize: 12, color: "#555" }}>
-            Due date (+15d): {dueDate}
-          </span>
+        <div style={{ marginTop: 12, fontSize: 13, color: "#666" }}>Due date (+15d by default) <strong>{dueDate}</strong></div>
+
+        <div style={{ marginTop: 12 }}>
+          <button onClick={handleSaveToDrive}>Save (saves to Drive & increments)</button>
         </div>
       </section>
 
-      <section style={{ border: "1px solid #ddd", padding: 12, borderRadius: 8 }}>
-        <h3>Preview (lightweight)</h3>
-        <p>
-          {new Date(date).toLocaleDateString()} → due {new Date(dueDate).toLocaleDateString()}
-        </p>
-        <p>Invoice #{invoiceNo}</p>
-        <p>{contact.name}</p>
-        <p>{contact.address1}</p>
-        <p>{contact.cityzip}</p>
+      {/* PREVIEW */}
+      <section style={{ marginTop: 16, padding: 16, border: "1px solid #eee", borderRadius: 8 }}>
+        <h3 style={{ marginTop: 0 }}>Preview (lightweight)</h3>
+        <div>{new Date(date).toLocaleDateString()} → due {new Date(dueDate).toLocaleDateString()}</div>
+        <div style={{ marginTop: 6 }}>Invoice #{invoiceNo}</div>
       </section>
     </div>
   );
