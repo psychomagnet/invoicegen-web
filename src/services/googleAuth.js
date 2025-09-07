@@ -1,86 +1,65 @@
 // src/services/googleAuth.js
-
 let tokenClient = null;
 let accessToken = null;
-let expireAt = 0;
+let expiresAt = 0; // unix seconds
 
-// Use Drive (only files you create/open with the app) + Gmail send
-const SCOPES = [
-  "https://www.googleapis.com/auth/drive.file",
-  "https://www.googleapis.com/auth/gmail.send"
-].join(" ");
+// We need full Drive since we read by folderId and upload later
+const SCOPES = "https://www.googleapis.com/auth/drive";
 
-// Return seconds since epoch
-const now = () => Math.floor(Date.now() / 1000);
+const nowSec = () => Math.floor(Date.now() / 1000);
 
-/**
- * Initialize Google OAuth client with your Client ID
- */
 export function initGoogleAuth(clientId) {
   if (!window.google?.accounts?.oauth2) {
     throw new Error(
-      'Google Identity script not loaded. Add <script src="https://accounts.google.com/gsi/client" async defer></script> into <head>.'
+      'Google Identity script not loaded. Add <script src="https://accounts.google.com/gsi/client" async defer></script> to <head>.'
     );
   }
-
   tokenClient = window.google.accounts.oauth2.initTokenClient({
     client_id: clientId,
     scope: SCOPES,
-    callback: () => {}, // set per request
+    prompt: "", // try silent first
+    callback: (resp) => {
+      if (resp?.error) return;
+      accessToken = resp.access_token;
+      // Add a small safety margin
+      expiresAt = nowSec() + (resp.expires_in || 3600) - 60;
+    },
   });
 }
 
 /**
- * Interactive sign-in (popup consent)
+ * Ensure we have a valid access token.
+ * - If a fresh token exists, returns it.
+ * - Otherwise requests a token. If `interactive` is false, attempts silent; if that fails, resolves only if interactive==true.
  */
-export function signInInteractive() {
+export function ensureAccess({ interactive = true } = {}) {
   if (!tokenClient) throw new Error("Google auth not initialized");
+  const now = nowSec();
+  if (accessToken && now < expiresAt) return Promise.resolve(accessToken);
 
   return new Promise((resolve, reject) => {
     tokenClient.callback = (resp) => {
-      if (resp.error) return reject(resp);
-      accessToken = resp.access_token;
-      expireAt = now() + resp.expires_in;
-      resolve(accessToken);
+      if (resp && !resp.error) {
+        accessToken = resp.access_token;
+        expiresAt = nowSec() + (resp.expires_in || 3600) - 60;
+        resolve(accessToken);
+      } else {
+        reject(new Error(resp?.error || "Auth failed"));
+      }
     };
-
-    tokenClient.requestAccessToken({ prompt: "consent" });
+    tokenClient.requestAccessToken({
+      // If not interactive, try silent first; otherwise show the consent UI.
+      prompt: interactive ? "consent" : "",
+    });
   });
 }
 
-/**
- * Silent token fetch (if not expired)
- */
-export async function getAccessToken() {
-  if (accessToken && expireAt > now() + 60) {
-    return accessToken;
-  }
-
-  return new Promise((resolve, reject) => {
-    if (!tokenClient) return reject("Google auth not initialized");
-
-    tokenClient.callback = (resp) => {
-      if (resp.error) return reject(resp);
-      accessToken = resp.access_token;
-      expireAt = now() + resp.expires_in;
-      resolve(accessToken);
-    };
-
-    tokenClient.requestAccessToken({ prompt: "" }); // silent if possible
-  });
+export function getAccessToken() {
+  return accessToken;
 }
 
-/**
- * Request access wrapper (used in App.jsx)
- */
-export async function requestAccess() {
-  return signInInteractive();
-}
-
-/**
- * Sign out (clear local token only, user stays logged into Google)
- */
 export function signOut() {
   accessToken = null;
-  expireAt = 0;
+  expiresAt = 0;
+  // (Optional) You can also revoke with google.accounts.oauth2.revoke if desired.
 }
