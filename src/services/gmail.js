@@ -1,41 +1,68 @@
-import { getAccessToken } from './googleAuth.js'
+// src/services/gmail.js
+import { getAccessToken } from "./googleAuth";
 
-const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
-
-function base64url(input) {
-  return btoa(input).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+// Convert string to base64url
+function base64UrlEncode(str) {
+  return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-export async function sendEmail({ to, subject, bodyText, attachments=[] }) {
-  const token = getAccessToken()
-  if (!token) throw new Error('Not authed')
+/**
+ * Send a MIME email via Gmail API with (optional) attachments.
+ * attachments: [{ name, blob, contentType }]
+ */
+export async function sendMessage({ to, cc = "", subject, html, attachments = [] }) {
+  const token = await getAccessToken();
+  if (!token) throw new Error("Not authenticated");
 
-  const boundary = 'invoicegen-boundary'
-  const parts = []
-  parts.push(`Content-Type: text/plain; charset="UTF-8"\r\n\r\n${bodyText}`)
+  const boundary = "gmail_boundary_" + Math.random().toString(36).slice(2);
+  const nl = "\r\n";
 
-  for (const a of attachments) {
-    const content = await a.blob.arrayBuffer()
-    const binary = String.fromCharCode(...new Uint8Array(content))
-    const b64 = btoa(binary)
-    parts.push(
-      `Content-Type: ${a.mime}; name="${a.filename}"\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename="${a.filename}"\r\n\r\n${b64}`
-    )
+  // Build body
+  let body =
+    `Content-Type: multipart/mixed; boundary="${boundary}"${nl}` +
+    `MIME-Version: 1.0${nl}` +
+    `to: ${to}${nl}` +
+    (cc ? `cc: ${cc}${nl}` : "") +
+    `subject: ${subject}${nl}${nl}` +
+    `--${boundary}${nl}` +
+    `Content-Type: text/html; charset="UTF-8"${nl}${nl}` +
+    `${html}${nl}${nl}`;
+
+  // Attachments
+  for (const att of attachments) {
+    const bytes = new Uint8Array(await att.blob.arrayBuffer());
+    let bin = "";
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    const b64 = btoa(bin);
+
+    body +=
+      `--${boundary}${nl}` +
+      `Content-Type: ${att.contentType || "application/octet-stream"}; name="${att.name}"${nl}` +
+      `Content-Disposition: attachment; filename="${att.name}"${nl}` +
+      `Content-Transfer-Encoding: base64${nl}${nl}` +
+      `${b64}${nl}`;
   }
 
-  const raw =
-    `To: ${to}\r\n` +
-    `Subject: ${subject}\r\n` +
-    `MIME-Version: 1.0\r\n` +
-    `Content-Type: multipart/mixed; boundary="${boundary}"\r\n\r\n` +
-    parts.map(p => `--${boundary}\r\n${p}`).join('\r\n') +
-    `\r\n--${boundary}--`
+  body += `--${boundary}--`;
 
-  const r = await fetch(GMAIL_API, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ raw: base64url(raw) })
-  })
-  if (!r.ok) throw new Error('Gmail send failed')
-  return await r.json()
+  const raw = base64UrlEncode(body);
+  const res = await fetch(
+    "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ raw }),
+    }
+  );
+
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Gmail send failed: ${res.status} ${t}`);
+  }
+  return await res.json();
 }
+
+export default { sendMessage };
