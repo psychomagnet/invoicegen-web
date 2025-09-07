@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { initGoogleAuth, signInInteractive } from "../services/googleAuth";
+import { initGoogleAuth, requestAccess, getAccessToken } from "../services/googleAuth";
 
 const LS_KEYS = {
   clientId: "inv_web_client_id",
@@ -9,69 +9,80 @@ const LS_KEYS = {
 export default function Login({ onAuthed }) {
   const [clientId, setClientId] = useState(localStorage.getItem(LS_KEYS.clientId) || "");
   const [folderId, setFolderId] = useState(localStorage.getItem(LS_KEYS.folderId) || "");
-  const [status, setStatus] = useState("Idle");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
+  // If both are already present and we have a token, skip straight in
   useEffect(() => {
-    if (!clientId) return;
     try {
-      initGoogleAuth(clientId);
-      setStatus("Ready to sign in");
-    } catch (e) {
-      setStatus(`Init error: ${e.message}`);
+      if (clientId) initGoogleAuth(clientId);
+      if (clientId && folderId && getAccessToken()) {
+        onAuthed?.({ clientId, folderId });
+      }
+    } catch {
+      /* ignore until user submits */
     }
-  }, [clientId]);
+  }, []); // run once
 
-  async function handleSignIn() {
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setError("");
+    if (!clientId || !folderId) {
+      setError("Please enter both Client ID and Drive Folder ID.");
+      return;
+    }
     try {
-      setStatus("Signing in…");
-      await signInInteractive();
-      localStorage.setItem(LS_KEYS.clientId, clientId.trim());
-      localStorage.setItem(LS_KEYS.folderId, folderId.trim());
-      setStatus("Signed in");
-      onAuthed({ clientId: clientId.trim(), folderId: folderId.trim() });
-    } catch (e) {
-      setStatus(`Sign-in error: ${e.message}`);
+      setBusy(true);
+      // Initialize the Google Identity client with the provided Client ID
+      initGoogleAuth(clientId);
+
+      // Ask user to grant Drive access
+      await requestAccess();
+
+      // Persist settings locally
+      localStorage.setItem(LS_KEYS.clientId, clientId);
+      localStorage.setItem(LS_KEYS.folderId, folderId);
+
+      onAuthed?.({ clientId, folderId });
+    } catch (err) {
+      setError(err?.message || String(err));
+    } finally {
+      setBusy(false);
     }
   }
 
   return (
     <div className="login-wrap">
       <div className="login-card">
-        <div className="login-title">InvoiceGen Web · Sign in</div>
-        <div className="help">
-          Paste your <b>Google OAuth Client ID</b> and the <b>Drive Folder ID</b> for saving
-          invoices. You’ll only do this once; we remember them locally.
-        </div>
+        <h1>InvoiceGen Web</h1>
+        <p className="muted">Sign in with Google to continue</p>
 
-        <div className="field">
-          <label>Google OAuth Client ID</label>
+        <form onSubmit={handleSubmit} className="login-form">
+          <label className="label">Google OAuth Client ID</label>
           <input
             className="input"
-            placeholder="xxxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com"
+            placeholder="YOUR_CLIENT_ID.apps.googleusercontent.com"
             value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
+            onChange={(e) => setClientId(e.target.value.trim())}
           />
-        </div>
 
-        <div className="field">
-          <label>Drive Folder ID</label>
+          <label className="label">Drive Folder ID</label>
           <input
             className="input"
             placeholder="Drive folder ID (the long string in the URL)"
             value={folderId}
-            onChange={(e) => setFolderId(e.target.value)}
+            onChange={(e) => setFolderId(e.target.value.trim())}
           />
-        </div>
 
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-          <div className="help">Status: {status}</div>
-          <button className="btn btn-primary" disabled={!clientId || !folderId} onClick={handleSignIn}>
-            Sign in with Google
+          {error && <div className="error">{error}</div>}
+
+          <button className="btn btn-primary" type="submit" disabled={busy}>
+            {busy ? "Signing in…" : "Save & Sign in"}
           </button>
-        </div>
+        </form>
 
-        <div className="help">
-          Tip: make sure your OAuth “Authorized JavaScript origins” include this site and localhost (during dev).
+        <div className="footnote">
+          We request Google Drive access to save invoices in your chosen folder.
         </div>
       </div>
     </div>
